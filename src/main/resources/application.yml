@@ -1,0 +1,172 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: bank-ai-assistant
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/bank_ai_assistant?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: never
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    locations: classpath:db/migration
+    baseline-on-migrate: ${FLYWAY_BASELINE_ON_MIGRATE:true}
+    baseline-version: ${FLYWAY_BASELINE_VERSION:0}
+    validate-on-migrate: true
+    out-of-order: false
+  servlet:
+    multipart:
+      max-file-size: ${MAX_FILE_SIZE:50MB}
+      max-request-size: ${MAX_REQUEST_SIZE:60MB}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    listener:
+      simple:
+        acknowledge-mode: manual
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 2s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: ${REDIS_TIMEOUT:2s}
+    elasticsearch:
+      uris: ${ELASTICSEARCH_URIS:http://localhost:9200}
+      username: ${ELASTICSEARCH_USERNAME:}
+      password: ${ELASTICSEARCH_PASSWORD:}
+  ai:
+    openai:
+      api-key: ${QWEN_API_KEY:dummy-key-for-local-startup}
+      base-url: ${QWEN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      chat:
+        options:
+          model: ${QWEN_CHAT_MODEL:qwen-plus}
+          temperature: ${QWEN_TEMPERATURE:0.2}
+      embedding:
+        options:
+          model: ${QWEN_EMBEDDING_MODEL:text-embedding-v2}
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler
+
+aliyun:
+  oss:
+    endpoint: ${ALIYUN_OSS_ENDPOINT:http://localhost:9000}
+    access-key-id: ${ALIYUN_OSS_ACCESS_KEY_ID:local-access-key}
+    access-key-secret: ${ALIYUN_OSS_ACCESS_KEY_SECRET:local-secret-key}
+    bucket-name: ${ALIYUN_OSS_BUCKET:bank-ai-assistant}
+    public-url-prefix: ${ALIYUN_OSS_PUBLIC_URL_PREFIX:}
+
+qwen:
+  api-key: ${QWEN_API_KEY:dummy-key-for-local-startup}
+  base-url: ${QWEN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+  chat:
+    model: ${QWEN_CHAT_MODEL:qwen-plus}
+    temperature: ${QWEN_TEMPERATURE:0.2}
+    timeout-millis: ${QWEN_CHAT_TIMEOUT_MILLIS:5000}
+    intent-timeout-millis: ${QWEN_INTENT_TIMEOUT_MILLIS:450}
+  embedding:
+    model: ${QWEN_EMBEDDING_MODEL:text-embedding-v2}
+    max-batch-size: ${QWEN_EMBEDDING_MAX_BATCH_SIZE:100}
+    max-retries: ${QWEN_EMBEDDING_MAX_RETRIES:3}
+    max-input-chars: ${QWEN_EMBEDDING_MAX_INPUT_CHARS:3500}
+
+langchain4j:
+  qwen:
+    chat-model:
+      api-key: ${QWEN_API_KEY:dummy-key-for-local-startup}
+      model-name: ${QWEN_CHAT_MODEL:qwen-plus}
+    streaming-chat-model:
+      api-key: ${QWEN_API_KEY:dummy-key-for-local-startup}
+      model-name: ${QWEN_CHAT_MODEL:qwen-plus}
+    embedding-model:
+      api-key: ${QWEN_API_KEY:dummy-key-for-local-startup}
+      model-name: ${QWEN_EMBEDDING_MODEL:text-embedding-v2}
+
+app:
+  ai:
+    elasticsearch:
+      chunk-index-name: ${DOCUMENT_CHUNK_INDEX:bank-ai-document-chunk}
+      max-conn-total: ${ES_MAX_CONN_TOTAL:100}
+      max-conn-per-route: ${ES_MAX_CONN_PER_ROUTE:50}
+      connect-timeout-millis: ${ES_CONNECT_TIMEOUT_MILLIS:5000}
+      socket-timeout-millis: ${ES_SOCKET_TIMEOUT_MILLIS:30000}
+      hybrid-recall-size: ${ES_HYBRID_RECALL_SIZE:50}
+      rrf-k: ${ES_RRF_K:60}
+      min-rrf-score: ${ES_MIN_RRF_SCORE:0.012}
+      title-match-boost: ${ES_TITLE_MATCH_BOOST:0.03}
+    document:
+      parse-exchange: ${DOCUMENT_PARSE_EXCHANGE:ai.document.exchange}
+      parse-queue: ${DOCUMENT_PARSE_QUEUE:ai.document.parse.queue}
+      parse-routing-key: ${DOCUMENT_PARSE_ROUTING_KEY:ai.document.parse}
+      parse-dead-letter-exchange: ${DOCUMENT_PARSE_DLX:ai.document.parse.dlx}
+      parse-dead-letter-queue: ${DOCUMENT_PARSE_DLQ:ai.document.parse.dlq}
+      parse-dead-letter-routing-key: ${DOCUMENT_PARSE_DL_ROUTING_KEY:ai.document.parse.dead}
+      parse-message-ttl-millis: ${DOCUMENT_PARSE_MESSAGE_TTL_MILLIS:60000}
+      parse-max-retry-count: ${DOCUMENT_PARSE_MAX_RETRY_COUNT:3}
+      chunk-index-name: ${DOCUMENT_CHUNK_INDEX:bank-ai-document-chunk}
+      pdf:
+        ocr-enabled: ${DOCUMENT_PDF_OCR_ENABLED:false}
+        tessdata-path: ${DOCUMENT_PDF_TESSDATA_PATH:}
+        ocr-language: ${DOCUMENT_PDF_OCR_LANGUAGE:chi_sim}
+        chunk-min-chars: ${DOCUMENT_CHUNK_MIN_CHARS:500}
+        chunk-max-chars: ${DOCUMENT_CHUNK_MAX_CHARS:1000}
+        chunk-overlap-chars: ${DOCUMENT_CHUNK_OVERLAP_CHARS:150}
+    dialog:
+      intent-cache-ttl-seconds: ${DIALOG_INTENT_CACHE_TTL_SECONDS:300}
+      low-confidence-threshold: ${DIALOG_LOW_CONFIDENCE_THRESHOLD:0.6}
+      max-context-messages: ${DIALOG_MAX_CONTEXT_MESSAGES:6}
+      intent-prompt-template: |
+        你是银行内部 AI 助手的意图识别器。请根据用户问题和会话上下文判断用户意图，并且只输出 JSON。
+        角色定义：你服务银行员工，任务是把请求路由到制度问答、业务查询、业务办理、闲聊或补充信息。
+        分类规则：
+        1. POLICY_QA：询问制度、办法、流程、规定、FAQ、操作手册等知识库内容。
+        2. BUSINESS_QUERY：查询业务数据、记录、余额、进度、统计等只读信息。
+        3. BUSINESS_EXECUTE：提交、办理、申请、审批、修改、删除等写操作。
+        4. CHITCHAT：问候、闲聊、能力咨询。
+        5. AMBIGUOUS：缺少关键条件，无法判断或无法执行。
+        输出 JSON Schema：
+        {"intent":"POLICY_QA|BUSINESS_QUERY|BUSINESS_EXECUTE|CHITCHAT|AMBIGUOUS","confidence":0.0,"slots":{"key":"value"},"missingSlots":["slot"],"clarifyQuestion":"追问话术","routeTarget":"路由目标","reason":"简要原因"}
+        会话上下文：
+        {context}
+        用户问题：
+        {question}
+      rag-answer-prompt-template: |
+        你是银行内部 AI 企业智能助手。请只基于检索到的知识库片段回答，回答要准确、简洁、可执行。
+        如果知识库片段不足以回答，请说明“知识库中未找到足够依据，建议咨询相关部门”。
+        用户问题：{question}
+        检索片段：
+        {context}
+        引用来源：
+        {citations}
+        请在答案末尾列出引用来源。
+      chitchat-prompt-template: |
+        你是银行内部 AI 企业智能助手，语气专业、友好、简洁。
+        会话上下文：
+        {context}
+        用户问题：
+        {question}
+    security:
+      reconcile-fixed-delay-ms: ${AI_SECURITY_RECONCILE_FIXED_DELAY_MS:300000}
+    pending-operation:
+      default-expire-minutes: ${PENDING_OPERATION_EXPIRE_MINUTES:10}
+
+logging:
+  level:
+    root: INFO
+    com.bank.aiassistant: ${APP_LOG_LEVEL:INFO}

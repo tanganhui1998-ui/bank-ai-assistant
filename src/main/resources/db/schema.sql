@@ -1,0 +1,7 @@
+-- Deprecated schema entry.
+--
+-- Database structure is now managed by Flyway.
+-- Use migration scripts under:
+--   src/main/resources/db/migration
+--
+-- This file is intentionally kept as a pointer for older documentation and tooling.

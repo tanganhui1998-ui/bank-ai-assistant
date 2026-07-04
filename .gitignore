@@ -1,0 +1,12 @@
+target/
+.idea/
+.vscode/
+*.iml
+
+.env
+*.log
+
+.mvn/wrapper/maven-wrapper.jar
+
+hs_err_pid*
+replay_pid*
