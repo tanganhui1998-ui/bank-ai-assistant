@@ -1,6 +1,7 @@
 package com.bank.aiassistant.embedding;
 
 import com.bank.aiassistant.config.QwenProperties;
+import com.bank.aiassistant.performance.EmbeddingCacheService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -30,10 +31,15 @@ import java.util.List;
 public class QwenEmbeddingService implements EmbeddingService {
 
     private final QwenProperties properties;
+    private final EmbeddingCacheService embeddingCacheService;
 
     @Override
     public List<Float> embed(String text) {
-        return embedBatch(List.of(text)).get(0);
+        return embeddingCacheService.get(text).orElseGet(() -> {
+            List<Float> embedding = embedBatch(List.of(text)).get(0);
+            embeddingCacheService.put(text, embedding);
+            return embedding;
+        });
     }
 
     @Override

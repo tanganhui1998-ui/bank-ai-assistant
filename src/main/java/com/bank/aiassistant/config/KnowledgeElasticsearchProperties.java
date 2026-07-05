@@ -78,4 +78,9 @@ public class KnowledgeElasticsearchProperties {
      * 切片质量分在重排中的权重，避免低质量切片在召回结果中排得过前。
      */
     private double qualityScoreBoost = 0.02D;
+
+    /**
+     * 在线检索单路召回超时时间，单位毫秒。
+     */
+    private long retrievalTimeoutMillis = 500L;
 }

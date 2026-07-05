@@ -4,6 +4,8 @@ import com.bank.aiassistant.config.KnowledgeElasticsearchProperties;
 import com.bank.aiassistant.context.CurrentUser;
 import com.bank.aiassistant.context.CurrentUserProvider;
 import com.bank.aiassistant.embedding.EmbeddingService;
+import com.bank.aiassistant.performance.RetrievalBulkhead;
+import com.bank.aiassistant.performance.RetrievalMetricsService;
 import com.bank.aiassistant.security.PermissionFilterService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,7 +28,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -56,6 +60,8 @@ public class OnlineRetrievalService {
     private final RetrievalAuditService retrievalAuditService;
     private final RagQueryRewriteService queryRewriteService;
     private final RetrievalRerankService retrievalRerankService;
+    private final RetrievalBulkhead retrievalBulkhead;
+    private final RetrievalMetricsService retrievalMetricsService;
 
     @Qualifier("retrievalExecutor")
     private final Executor retrievalExecutor;
@@ -63,9 +69,25 @@ public class OnlineRetrievalService {
     public RetrievalResponse retrieve(RetrievalRequest request) {
         long start = System.currentTimeMillis();
         CurrentUser currentUser = currentUserProvider.currentUser();
+        if (!retrievalBulkhead.tryAcquire()) {
+            log.warn("Online retrieval rejected by bulkhead, userId={}, question={}", currentUser.userId(), request.getQuestion());
+            RetrievalResponse response = lowConfidenceResponse(request.getQuestion(), start, "系统当前检索请求较多，请稍后重试。");
+            retrievalAuditService.record(currentUser, response);
+            retrievalMetricsService.record("bulkhead_rejected", response.elapsedMs(), 0);
+            return response;
+        }
+        try {
+            return doRetrieve(request, currentUser, start);
+        } finally {
+            retrievalBulkhead.release();
+        }
+    }
+
+    private RetrievalResponse doRetrieve(RetrievalRequest request, CurrentUser currentUser, long start) {
         int topK = normalizeTopK(request.getTopK());
         List<Map<String, Object>> filters = buildFilters(request.getFilters());
         List<String> rewrittenQueries = queryRewriteService.rewrite(request.getQuestion());
+        long timeoutMillis = Math.max(100L, properties.getRetrievalTimeoutMillis());
 
         AtomicLong bm25Ms = new AtomicLong();
         AtomicLong embeddingMs = new AtomicLong();
@@ -79,7 +101,7 @@ public class OnlineRetrievalService {
                     } finally {
                         bm25Ms.set(System.currentTimeMillis() - bm25Start);
                     }
-                }, retrievalExecutor);
+                }, retrievalExecutor).completeOnTimeout(List.of(), timeoutMillis, TimeUnit.MILLISECONDS);
         CompletableFuture<List<Float>> queryVectorFuture = CompletableFuture.supplyAsync(
                 () -> {
                     long embeddingStart = System.currentTimeMillis();
@@ -97,10 +119,10 @@ public class OnlineRetrievalService {
                     } finally {
                         vectorMs.set(System.currentTimeMillis() - vectorStart);
                     }
-                }, retrievalExecutor);
+                }, retrievalExecutor).completeOnTimeout(List.of(), timeoutMillis, TimeUnit.MILLISECONDS);
 
-        List<EsHit> bm25Hits = bm25Future.join();
-        List<EsHit> vectorHits = vectorFuture.join();
+        List<EsHit> bm25Hits = joinOrEmpty("BM25", bm25Future, request.getQuestion());
+        List<EsHit> vectorHits = joinOrEmpty("VECTOR", vectorFuture, request.getQuestion());
         long fusionStart = System.currentTimeMillis();
         BuiltResults builtResults = fuseAndBuildResults(request.getQuestion(), bm25Hits, vectorHits, topK);
         List<RetrievalResultItem> results = builtResults.results();
@@ -128,6 +150,7 @@ public class OnlineRetrievalService {
                 .build();
 
         retrievalAuditService.record(currentUser, response);
+        retrievalMetricsService.record(lowConfidence ? "low_confidence" : "success", response.elapsedMs(), results.size());
         log.info("Online retrieval finished, userId={}, question={}, rewrittenQueries={}, hitCount={}, elapsedMs={}, trace={}, documentIds={}",
                 currentUser.userId(), request.getQuestion(), rewrittenQueries, results.size(), response.elapsedMs(), response.trace(),
                 results.stream().map(RetrievalResultItem::documentId).distinct().toList());
@@ -136,6 +159,33 @@ public class OnlineRetrievalService {
                     currentUser.userId(), request.getQuestion(), response.elapsedMs());
         }
         return response;
+    }
+
+    private List<EsHit> joinOrEmpty(String name, CompletableFuture<List<EsHit>> future, String question) {
+        try {
+            return future.join();
+        } catch (CompletionException ex) {
+            log.warn("Retrieval branch failed and degraded, branch={}, question={}", name, question, ex);
+            return List.of();
+        }
+    }
+
+    private RetrievalResponse lowConfidenceResponse(String question, long start, String message) {
+        return RetrievalResponse.builder()
+                .question(question)
+                .results(List.of())
+                .citations(List.of())
+                .lowConfidence(true)
+                .message(message)
+                .elapsedMs(System.currentTimeMillis() - start)
+                .trace(RetrievalTrace.builder()
+                        .rewrittenQueries(List.of(question))
+                        .timings(Map.of())
+                        .bm25HitCount(0)
+                        .vectorHitCount(0)
+                        .fusedHitCount(0)
+                        .build())
+                .build();
     }
 
     private List<Map<String, Object>> buildFilters(RetrievalFilters extraFilters) {

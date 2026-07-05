@@ -2,6 +2,7 @@ package com.bank.aiassistant.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -16,15 +17,20 @@ import java.util.concurrent.Executor;
 @Configuration
 @EnableAsync
 @EnableScheduling
+@EnableConfigurationProperties(PerformanceProperties.class)
 public class AsyncConfig {
 
     @Bean("retrievalExecutor")
-    public Executor retrievalExecutor() {
+    public Executor retrievalExecutor(PerformanceProperties properties) {
+        PerformanceProperties.Async async = properties.getAsync();
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(8);
-        executor.setMaxPoolSize(16);
-        executor.setQueueCapacity(200);
+        executor.setCorePoolSize(async.getCorePoolSize());
+        executor.setMaxPoolSize(async.getMaxPoolSize());
+        executor.setQueueCapacity(async.getQueueCapacity());
+        executor.setKeepAliveSeconds(async.getKeepAliveSeconds());
         executor.setThreadNamePrefix("retrieval-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(20);
         executor.initialize();
         return executor;
     }
