@@ -47,7 +47,7 @@ docker compose up -d
 .\scripts\run-local.ps1
 ```
 
-更多说明见 [本地开发文档](D:/workplace/codex/docs/LOCAL_DEVELOPMENT.md) 和 [详细设计文档](D:/workplace/codex/docs/DETAILED_DESIGN_AND_ROADMAP.md)。
+更多说明见 [本地运行操作文档](docs/LOCAL_RUNBOOK.md)、[本地开发文档](docs/LOCAL_DEVELOPMENT.md) 和 [详细设计文档](docs/DETAILED_DESIGN_AND_ROADMAP.md)。
 
 ## 数据库迁移
 
