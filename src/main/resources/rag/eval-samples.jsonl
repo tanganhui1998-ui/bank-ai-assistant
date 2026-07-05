@@ -1,0 +1,3 @@
+{"id":"rag_eval_001","question":"外包人员入场需要提交哪些材料？","expectedIntent":"POLICY_QA","expectedKeywords":["外包","入场","材料"],"expectedCitationHint":"外包人员管理办法","minAcceptableHitCount":1}
+{"id":"rag_eval_002","question":"员工年假可以跨年度使用吗？","expectedIntent":"POLICY_QA","expectedKeywords":["年假","跨年度","休假"],"expectedCitationHint":"考勤管理办法","minAcceptableHitCount":1}
+{"id":"rag_eval_003","question":"机密制度哪些人可以查看？","expectedIntent":"POLICY_QA","expectedKeywords":["机密","权限","密级"],"expectedCitationHint":"知识库权限","minAcceptableHitCount":1}

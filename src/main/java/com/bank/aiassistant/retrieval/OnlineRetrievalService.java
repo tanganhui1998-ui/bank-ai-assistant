@@ -23,11 +23,11 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * AI 助手在线混合检索服务。
@@ -54,6 +54,8 @@ public class OnlineRetrievalService {
     private final EmbeddingService embeddingService;
     private final CurrentUserProvider currentUserProvider;
     private final RetrievalAuditService retrievalAuditService;
+    private final RagQueryRewriteService queryRewriteService;
+    private final RetrievalRerankService retrievalRerankService;
 
     @Qualifier("retrievalExecutor")
     private final Executor retrievalExecutor;
@@ -63,17 +65,46 @@ public class OnlineRetrievalService {
         CurrentUser currentUser = currentUserProvider.currentUser();
         int topK = normalizeTopK(request.getTopK());
         List<Map<String, Object>> filters = buildFilters(request.getFilters());
+        List<String> rewrittenQueries = queryRewriteService.rewrite(request.getQuestion());
+
+        AtomicLong bm25Ms = new AtomicLong();
+        AtomicLong embeddingMs = new AtomicLong();
+        AtomicLong vectorMs = new AtomicLong();
 
         CompletableFuture<List<EsHit>> bm25Future = CompletableFuture.supplyAsync(
-                () -> bm25Search(request.getQuestion(), filters), retrievalExecutor);
+                () -> {
+                    long bm25Start = System.currentTimeMillis();
+                    try {
+                        return bm25Search(rewrittenQueries, filters);
+                    } finally {
+                        bm25Ms.set(System.currentTimeMillis() - bm25Start);
+                    }
+                }, retrievalExecutor);
         CompletableFuture<List<Float>> queryVectorFuture = CompletableFuture.supplyAsync(
-                () -> embeddingService.embed(request.getQuestion()), retrievalExecutor);
+                () -> {
+                    long embeddingStart = System.currentTimeMillis();
+                    try {
+                        return embeddingService.embed(request.getQuestion());
+                    } finally {
+                        embeddingMs.set(System.currentTimeMillis() - embeddingStart);
+                    }
+                }, retrievalExecutor);
         CompletableFuture<List<EsHit>> vectorFuture = queryVectorFuture.thenApplyAsync(
-                vector -> vectorSearch(vector, filters), retrievalExecutor);
+                vector -> {
+                    long vectorStart = System.currentTimeMillis();
+                    try {
+                        return vectorSearch(vector, filters);
+                    } finally {
+                        vectorMs.set(System.currentTimeMillis() - vectorStart);
+                    }
+                }, retrievalExecutor);
 
         List<EsHit> bm25Hits = bm25Future.join();
         List<EsHit> vectorHits = vectorFuture.join();
-        List<RetrievalResultItem> results = fuseAndBuildResults(request.getQuestion(), bm25Hits, vectorHits, topK);
+        long fusionStart = System.currentTimeMillis();
+        BuiltResults builtResults = fuseAndBuildResults(request.getQuestion(), bm25Hits, vectorHits, topK);
+        List<RetrievalResultItem> results = builtResults.results();
+        long fusionMs = System.currentTimeMillis() - fusionStart;
 
         boolean lowConfidence = results.isEmpty();
         RetrievalResponse response = RetrievalResponse.builder()
@@ -83,11 +114,22 @@ public class OnlineRetrievalService {
                 .lowConfidence(lowConfidence)
                 .message(lowConfidence ? LOW_CONFIDENCE_MESSAGE : null)
                 .elapsedMs(System.currentTimeMillis() - start)
+                .trace(RetrievalTrace.builder()
+                        .rewrittenQueries(rewrittenQueries)
+                        .timings(Map.of(
+                                "bm25Ms", bm25Ms.get(),
+                                "embeddingMs", embeddingMs.get(),
+                                "vectorMs", vectorMs.get(),
+                                "fusionMs", fusionMs))
+                        .bm25HitCount(bm25Hits.size())
+                        .vectorHitCount(vectorHits.size())
+                        .fusedHitCount(builtResults.fusedHitCount())
+                        .build())
                 .build();
 
         retrievalAuditService.record(currentUser, response);
-        log.info("Online retrieval finished, userId={}, question={}, hitCount={}, elapsedMs={}, documentIds={}",
-                currentUser.userId(), request.getQuestion(), results.size(), response.elapsedMs(),
+        log.info("Online retrieval finished, userId={}, question={}, rewrittenQueries={}, hitCount={}, elapsedMs={}, trace={}, documentIds={}",
+                currentUser.userId(), request.getQuestion(), rewrittenQueries, results.size(), response.elapsedMs(), response.trace(),
                 results.stream().map(RetrievalResultItem::documentId).distinct().toList());
         if (lowConfidence) {
             log.warn("Low confidence retrieval, userId={}, question={}, elapsedMs={}",
@@ -114,7 +156,17 @@ public class OnlineRetrievalService {
         }
     }
 
-    private List<EsHit> bm25Search(String question, List<Map<String, Object>> filters) {
+    private List<EsHit> bm25Search(List<String> queries, List<Map<String, Object>> filters) {
+        Map<String, EsHit> merged = new LinkedHashMap<>();
+        for (String query : queries) {
+            bm25SearchOne(query, filters).forEach(hit -> merged.putIfAbsent(hit.chunkId(), hit));
+        }
+        return new ArrayList<>(merged.values()).stream()
+                .limit(properties.getHybridRecallSize())
+                .toList();
+    }
+
+    private List<EsHit> bm25SearchOne(String question, List<Map<String, Object>> filters) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("size", properties.getHybridRecallSize());
         body.put("_source", Map.of("excludes", List.of("embedding")));
@@ -176,7 +228,7 @@ public class OnlineRetrievalService {
         return result;
     }
 
-    private List<RetrievalResultItem> fuseAndBuildResults(
+    private BuiltResults fuseAndBuildResults(
             String question,
             List<EsHit> bm25Hits,
             List<EsHit> vectorHits,
@@ -186,14 +238,15 @@ public class OnlineRetrievalService {
         applyRrf(fused, bm25Hits);
         applyRrf(fused, vectorHits);
         Set<String> keywords = extractKeywords(question);
-        fused.values().forEach(hit -> hit.applyTitleBoost(keywords, properties.getTitleMatchBoost()));
+        fused.values().forEach(hit -> hit.rerank(question));
 
-        return fused.values().stream()
+        List<RetrievalResultItem> results = fused.values().stream()
                 .filter(hit -> hit.score >= properties.getMinRrfScore())
                 .sorted(Comparator.comparingDouble(FusedHit::score).reversed())
                 .limit(topK)
                 .map(hit -> toResultItem(hit, keywords))
                 .toList();
+        return new BuiltResults(results, fused.size());
     }
 
     private void applyRrf(Map<String, FusedHit> fused, List<EsHit> hits) {
@@ -297,18 +350,15 @@ public class OnlineRetrievalService {
             this.score += value;
         }
 
-        void applyTitleBoost(Set<String> keywords, double boost) {
-            String chapterPath = stringValue(hit.source().get("chapterPath")).toLowerCase(Locale.ROOT);
-            for (String keyword : keywords) {
-                if (chapterPath.contains(keyword.toLowerCase(Locale.ROOT))) {
-                    score += boost;
-                    return;
-                }
-            }
+        void rerank(String question) {
+            score = retrievalRerankService.rerank(question, score, hit.source());
         }
 
         double score() {
             return score;
         }
+    }
+
+    private record BuiltResults(List<RetrievalResultItem> results, int fusedHitCount) {
     }
 }

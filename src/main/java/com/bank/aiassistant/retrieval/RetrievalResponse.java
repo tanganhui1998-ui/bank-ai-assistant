@@ -14,6 +14,7 @@ public record RetrievalResponse(
         List<String> citations,
         boolean lowConfidence,
         String message,
-        long elapsedMs
+        long elapsedMs,
+        RetrievalTrace trace
 ) {
 }

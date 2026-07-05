@@ -110,6 +110,11 @@ app:
       rrf-k: ${ES_RRF_K:60}
       min-rrf-score: ${ES_MIN_RRF_SCORE:0.012}
       title-match-boost: ${ES_TITLE_MATCH_BOOST:0.03}
+      query-rewrite-enabled: ${ES_QUERY_REWRITE_ENABLED:true}
+      max-rewrite-queries: ${ES_MAX_REWRITE_QUERIES:3}
+      rerank-enabled: ${ES_RERANK_ENABLED:true}
+      content-match-boost: ${ES_CONTENT_MATCH_BOOST:0.015}
+      quality-score-boost: ${ES_QUALITY_SCORE_BOOST:0.02}
     document:
       parse-exchange: ${DOCUMENT_PARSE_EXCHANGE:ai.document.exchange}
       parse-queue: ${DOCUMENT_PARSE_QUEUE:ai.document.parse.queue}

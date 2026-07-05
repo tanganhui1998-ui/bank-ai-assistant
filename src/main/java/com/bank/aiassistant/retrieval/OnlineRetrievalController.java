@@ -26,6 +26,7 @@ public class OnlineRetrievalController {
 
     private final OnlineRetrievalService onlineRetrievalService;
     private final RetrievalStatsService retrievalStatsService;
+    private final RetrievalFeedbackService retrievalFeedbackService;
 
     @PostMapping
     public Result<RetrievalResponse> retrieve(@Valid @RequestBody RetrievalRequest request) {
@@ -41,5 +42,10 @@ public class OnlineRetrievalController {
     @GetMapping("/stats/low-hit")
     public Result<List<RetrievalStatsItem>> lowHitQueries(@RequestParam(defaultValue = "20") int limit) {
         return Result.success(retrievalStatsService.lowHitQueries(limit));
+    }
+
+    @PostMapping("/feedback")
+    public Result<RetrievalFeedbackResponse> feedback(@Valid @RequestBody RetrievalFeedbackRequest request) {
+        return Result.success(retrievalFeedbackService.submit(request));
     }
 }
