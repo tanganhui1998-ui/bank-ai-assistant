@@ -25,6 +25,7 @@ import java.time.LocalDateTime;
 public class AiSecuritySandboxService {
 
     private final BusinessToolPermissionService businessToolPermissionService;
+    private final SecurityRiskAssessmentService riskAssessmentService;
 
     public SecurityDecision checkIntent(CurrentUser user, IntentRecognitionResult intent) {
         if (intent == null || intent.intent() == null) {
@@ -53,7 +54,11 @@ public class AiSecuritySandboxService {
         if (permission != null && permission.permissionRejected()) {
             return SecurityDecision.deny(permission.message());
         }
-        return validateBusinessRules(record);
+        SecurityDecision businessDecision = validateBusinessRules(record);
+        if (!businessDecision.allowed()) {
+            return businessDecision;
+        }
+        return riskAssessmentService.checkPendingOperation(record);
     }
 
     private SecurityDecision validateBusinessRules(PendingConfirmationRecord record) {

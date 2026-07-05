@@ -2,6 +2,7 @@ package com.bank.aiassistant.config;
 
 import com.bank.aiassistant.security.MockSecurityContextFilter;
 import com.bank.aiassistant.security.GatewayHeaderAuthenticationFilter;
+import com.bank.aiassistant.security.RequestTraceFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -22,10 +23,12 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@EnableConfigurationProperties(SecurityIdentityProperties.class)
+@EnableConfigurationProperties({SecurityIdentityProperties.class, SecurityComplianceProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
 
+    private final SecurityComplianceProperties complianceProperties;
+    private final RequestTraceFilter requestTraceFilter;
     private final GatewayHeaderAuthenticationFilter gatewayHeaderAuthenticationFilter;
     private final MockSecurityContextFilter mockSecurityContextFilter;
 
@@ -33,7 +36,16 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
+                .headers(headers -> {
+                    if (complianceProperties.isSecureHeadersEnabled()) {
+                        headers.contentSecurityPolicy(policy -> policy.policyDirectives("default-src 'self'; frame-ancestors 'none'"));
+                        headers.frameOptions(frame -> frame.deny());
+                        headers.contentTypeOptions(options -> {
+                        });
+                    }
+                })
                 .authorizeHttpRequests(registry -> registry.anyRequest().authenticated())
+                .addFilterBefore(requestTraceFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(gatewayHeaderAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(mockSecurityContextFilter, GatewayHeaderAuthenticationFilter.class)
                 .build();

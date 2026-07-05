@@ -1,5 +1,6 @@
 package com.bank.aiassistant.security;
 
+import com.bank.aiassistant.config.SecurityComplianceProperties;
 import com.bank.aiassistant.context.CurrentUser;
 import com.bank.aiassistant.domain.entity.AiSecurityAuditLog;
 import com.bank.aiassistant.repository.AiSecurityAuditLogRepository;
@@ -24,12 +25,16 @@ public class SecurityAuditService {
     private final SensitiveDataMasker masker;
     private final ClientIpResolver clientIpResolver;
     private final ObjectMapper objectMapper;
+    private final SecurityComplianceProperties complianceProperties;
+    private final SecurityRiskAssessmentService riskAssessmentService;
 
     @Async("retrievalExecutor")
     public void record(SecurityAuditEvent event) {
         try {
             CurrentUser user = event.user();
             Map<String, Object> maskedParams = masker.mask(event.inputParams());
+            Object maskedResult = masker.maskObject(event.result());
+            LocalDateTime now = LocalDateTime.now();
             repository.save(AiSecurityAuditLog.builder()
                     .userId(user.userId())
                     .userName(user.userName())
@@ -38,12 +43,15 @@ public class SecurityAuditService {
                     .toolName(event.toolName())
                     .operationType(event.operationType())
                     .inputParamsJson(objectMapper.writeValueAsString(maskedParams))
-                    .resultJson(objectMapper.writeValueAsString(event.result()))
+                    .resultJson(objectMapper.writeValueAsString(maskedResult))
                     .rejected(event.rejected())
                     .rejectReason(event.rejectReason())
+                    .traceId(RequestTraceContext.get())
+                    .riskLevel(riskAssessmentService.assess(event))
                     .elapsedMs(event.elapsedMs())
                     .clientIp(clientIpResolver.resolve())
-                    .createdTime(LocalDateTime.now())
+                    .createdTime(now)
+                    .retentionUntil(now.plusDays(complianceProperties.getAuditRetentionDays()))
                     .build());
         } catch (Exception ex) {
             log.error("Failed to write security audit log, actionType={}, toolName={}",

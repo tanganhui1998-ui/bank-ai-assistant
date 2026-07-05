@@ -36,4 +36,18 @@ class SensitiveDataMaskerTest {
                 .containsEntry("idCard", "****")
                 .containsEntry("name", "张三");
     }
+
+    @Test
+    void maskShouldHideSensitiveValuesInsideTextAndLists() {
+        Map<String, Object> result = masker.mask(Map.of(
+                "comment", "手机号13800000000，身份证110101199001011234",
+                "items", java.util.List.of(Map.of("bankCard", "6222020202020202020"))));
+
+        assertThat(result.get("comment")).isEqualTo("手机号***********，身份证******************");
+        assertThat(result.get("items"))
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.LIST)
+                .first()
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .containsEntry("bankCard", "****");
+    }
 }

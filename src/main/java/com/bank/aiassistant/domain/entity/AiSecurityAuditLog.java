@@ -29,7 +29,10 @@ public class AiSecurityAuditLog {
     private String resultJson;
     private Boolean rejected;
     private String rejectReason;
+    private String traceId;
+    private String riskLevel;
     private Long elapsedMs;
     private String clientIp;
     private LocalDateTime createdTime;
+    private LocalDateTime retentionUntil;
 }

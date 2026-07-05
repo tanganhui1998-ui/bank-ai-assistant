@@ -179,6 +179,10 @@ app:
         data-scope-header: ${SECURITY_DATA_SCOPE_HEADER:X-Data-Scope}
         branch-no-header: ${SECURITY_BRANCH_NO_HEADER:X-Branch-No}
       reconcile-fixed-delay-ms: ${AI_SECURITY_RECONCILE_FIXED_DELAY_MS:300000}
+      compliance:
+        audit-retention-days: ${AI_SECURITY_AUDIT_RETENTION_DAYS:180}
+        max-leave-days: ${AI_SECURITY_MAX_LEAVE_DAYS:30}
+        secure-headers-enabled: ${AI_SECURITY_SECURE_HEADERS_ENABLED:true}
     pending-operation:
       default-expire-minutes: ${PENDING_OPERATION_EXPIRE_MINUTES:10}
   business-integration:
