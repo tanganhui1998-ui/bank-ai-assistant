@@ -58,14 +58,15 @@ public class DialogService {
         long start = System.currentTimeMillis();
         CurrentUser user = currentUserProvider.currentUser();
         String sessionId = normalizeSessionId(request.getSessionId());
+        String messageId = normalizeMessageId(request.getClientMessageId());
         String context = loadConversationContext(sessionId);
         ConversationSession session = conversationMemoryService.load(sessionId);
 
         ChatResponse response;
         if (session.state() == ConversationState.WAITING_SLOT) {
-            response = handleSlotFilling(sessionId, request.getMessage(), session, start);
+            response = handleSlotFilling(sessionId, messageId, request.getMessage(), session, start);
         } else if (session.state() == ConversationState.WAITING_CONFIRM) {
-            response = handleConfirm(sessionId, request.getMessage(), session, start);
+            response = handleConfirm(sessionId, messageId, request.getMessage(), session, start);
         } else {
             IntentRecognitionResult intent = intentRecognitionService.recognize(sessionId, request.getMessage(), context, user);
             SecurityDecision decision = sandboxService.checkIntent(user, intent);
@@ -81,9 +82,9 @@ public class DialogService {
                         .rejectReason(decision.reason())
                         .elapsedMs(System.currentTimeMillis() - start)
                         .build());
-                response = buildResponse(sessionId, intent, decision.reason(), List.of(), start);
+                response = buildResponse(sessionId, messageId, intent, decision.reason(), List.of(), ConversationState.COMPLETED, null, start);
             } else {
-                response = route(sessionId, request.getMessage(), context, intent, start);
+                response = route(sessionId, messageId, request.getMessage(), context, intent, start);
             }
         }
 
@@ -94,22 +95,24 @@ public class DialogService {
 
     private ChatResponse route(
             String sessionId,
+            String messageId,
             String message,
             String context,
             IntentRecognitionResult intent,
             long start
     ) {
         return switch (intent.intent()) {
-            case POLICY_QA -> handlePolicyQa(sessionId, message, context, intent, start);
-            case BUSINESS_QUERY -> handleBusinessQuery(sessionId, message, intent, start);
-            case BUSINESS_EXECUTE -> handleBusinessExecute(sessionId, message, intent, start);
-            case CHITCHAT -> handleChitchat(sessionId, message, context, intent, start);
-            case AMBIGUOUS -> handleAmbiguous(sessionId, intent, start);
+            case POLICY_QA -> handlePolicyQa(sessionId, messageId, message, context, intent, start);
+            case BUSINESS_QUERY -> handleBusinessQuery(sessionId, messageId, message, intent, start);
+            case BUSINESS_EXECUTE -> handleBusinessExecute(sessionId, messageId, message, intent, start);
+            case CHITCHAT -> handleChitchat(sessionId, messageId, message, context, intent, start);
+            case AMBIGUOUS -> handleAmbiguous(sessionId, messageId, intent, start);
         };
     }
 
     private ChatResponse handlePolicyQa(
             String sessionId,
+            String messageId,
             String message,
             String context,
             IntentRecognitionResult intent,
@@ -120,7 +123,7 @@ public class DialogService {
         retrievalRequest.setTopK(5);
         RetrievalResponse retrieval = onlineRetrievalService.retrieve(retrievalRequest);
         if (retrieval.lowConfidence()) {
-            return buildResponse(sessionId, intent, retrieval.message(), List.of(), start);
+            return buildResponse(sessionId, messageId, intent, retrieval.message(), List.of(), ConversationState.COMPLETED, null, start);
         }
 
         String ragContext = buildRagContext(retrieval);
@@ -130,24 +133,26 @@ public class DialogService {
                 .replace("{context}", context + "\n" + ragContext)
                 .replace("{citations}", citations);
         String answer = chatCompletionService.chat(List.of(new QwenChatMessage("user", prompt)));
-        return buildResponse(sessionId, intent, answer, retrieval.results().stream().map(RetrievalResultItem::citation).toList(), start);
+        return buildResponse(sessionId, messageId, intent, answer, retrieval.results().stream().map(RetrievalResultItem::citation).toList(), ConversationState.COMPLETED, null, start);
     }
 
-    private ChatResponse handleBusinessQuery(String sessionId, String message, IntentRecognitionResult intent, long start) {
+    private ChatResponse handleBusinessQuery(String sessionId, String messageId, String message, IntentRecognitionResult intent, long start) {
         ToolRouteResult result = functionCallingGateway.query(message, intent.slots());
-        return buildResponse(sessionId, intent, result.answer(), List.of(), start);
+        return buildResponse(sessionId, messageId, intent, result.answer(), List.of(), ConversationState.COMPLETED, null, start);
     }
 
-    private ChatResponse handleBusinessExecute(String sessionId, String message, IntentRecognitionResult intent, long start) {
+    private ChatResponse handleBusinessExecute(String sessionId, String messageId, String message, IntentRecognitionResult intent, long start) {
         ToolRouteResult result = functionCallingGateway.execute(message, intent.slots());
         if (result.waitingConfirm()) {
-            conversationMemoryService.updateState(sessionId, ConversationState.WAITING_CONFIRM, intent.intent(), intent.slots());
+            conversationMemoryService.updateState(sessionId, ConversationState.WAITING_CONFIRM, intent.intent(), intent.slots(), List.of(), result.pendingOperationId());
+            return buildResponse(sessionId, messageId, intent, result.answer(), List.of(), ConversationState.WAITING_CONFIRM, result.pendingOperationId(), start);
         }
-        return buildResponse(sessionId, intent, result.answer(), List.of(), start);
+        return buildResponse(sessionId, messageId, intent, result.answer(), List.of(), ConversationState.COMPLETED, null, start);
     }
 
     private ChatResponse handleChitchat(
             String sessionId,
+            String messageId,
             String message,
             String context,
             IntentRecognitionResult intent,
@@ -157,18 +162,18 @@ public class DialogService {
                 .replace("{context}", context)
                 .replace("{question}", message);
         String answer = chatCompletionService.chat(List.of(new QwenChatMessage("user", prompt)));
-        return buildResponse(sessionId, intent, answer, List.of(), start);
+        return buildResponse(sessionId, messageId, intent, answer, List.of(), ConversationState.COMPLETED, null, start);
     }
 
-    private ChatResponse handleAmbiguous(String sessionId, IntentRecognitionResult intent, long start) {
-        conversationMemoryService.updateState(sessionId, ConversationState.WAITING_SLOT, intent.intent(), intent.slots());
+    private ChatResponse handleAmbiguous(String sessionId, String messageId, IntentRecognitionResult intent, long start) {
+        conversationMemoryService.updateState(sessionId, ConversationState.WAITING_SLOT, intent.intent(), intent.slots(), intent.missingSlots(), null);
         String question = intent.clarifyQuestion() == null || intent.clarifyQuestion().isBlank()
                 ? "请补充关键信息后我再继续处理。"
                 : intent.clarifyQuestion();
-        return buildResponse(sessionId, intent, question, List.of(), start);
+        return buildResponse(sessionId, messageId, intent, question, List.of(), ConversationState.WAITING_SLOT, null, start);
     }
 
-    private ChatResponse handleSlotFilling(String sessionId, String message, ConversationSession session, long start) {
+    private ChatResponse handleSlotFilling(String sessionId, String messageId, String message, ConversationSession session, long start) {
         Map<String, Object> slots = new LinkedHashMap<>(session.slots() == null ? Map.of() : session.slots());
         slots.put("userSupplement", message);
         conversationMemoryService.updateState(sessionId, ConversationState.NORMAL, null, slots);
@@ -179,10 +184,10 @@ public class DialogService {
                 .routeTarget("SLOT_FILLED")
                 .reason("等待补槽状态下直接合并用户补充信息")
                 .build();
-        return buildResponse(sessionId, intent, "已收到补充信息，我会继续处理该请求。", List.of(), start);
+        return buildResponse(sessionId, messageId, intent, "已收到补充信息，我会继续处理该请求。", List.of(), ConversationState.COMPLETED, null, start);
     }
 
-    private ChatResponse handleConfirm(String sessionId, String message, ConversationSession session, long start) {
+    private ChatResponse handleConfirm(String sessionId, String messageId, String message, ConversationSession session, long start) {
         boolean confirmed = message.matches(".*(确认|同意|是|提交|继续).*");
         boolean canceled = message.matches(".*(取消|否|不用|停止).*");
         conversationMemoryService.updateState(sessionId, ConversationState.NORMAL, null, Map.of());
@@ -196,22 +201,30 @@ public class DialogService {
                 .routeTarget("CONFIRM_HANDLER")
                 .reason("等待确认状态下直接处理确认/取消")
                 .build();
-        return buildResponse(sessionId, intent, answer, List.of(), start);
+        ConversationState state = confirmed || canceled ? ConversationState.COMPLETED : ConversationState.WAITING_CONFIRM;
+        return buildResponse(sessionId, messageId, intent, answer, List.of(), state, session.pendingOperationId(), start);
     }
 
     private ChatResponse buildResponse(
             String sessionId,
+            String messageId,
             IntentRecognitionResult intent,
             String answer,
             List<CitationSource> citations,
+            ConversationState state,
+            String pendingOperationId,
             long start
     ) {
         return ChatResponse.builder()
                 .sessionId(sessionId)
+                .messageId(messageId)
                 .intent(intent.intent())
                 .answer(answer)
                 .citations(citations)
                 .slots(intent.slots())
+                .conversationState(state)
+                .pendingOperationId(pendingOperationId)
+                .suggestedActions(suggestedActions(state))
                 .lowConfidence(intent.confidence() < dialogProperties.getLowConfidenceThreshold())
                 .routeTarget(intent.routeTarget())
                 .elapsedMs(System.currentTimeMillis() - start)
@@ -260,5 +273,19 @@ public class DialogService {
 
     private String normalizeSessionId(String sessionId) {
         return sessionId == null || sessionId.isBlank() ? UUID.randomUUID().toString() : sessionId;
+    }
+
+    private String normalizeMessageId(String clientMessageId) {
+        return clientMessageId == null || clientMessageId.isBlank() ? UUID.randomUUID().toString() : clientMessageId;
+    }
+
+    private List<String> suggestedActions(ConversationState state) {
+        if (state == ConversationState.WAITING_CONFIRM) {
+            return List.of("confirm", "cancel");
+        }
+        if (state == ConversationState.WAITING_SLOT || state == ConversationState.COLLECTING_SLOTS) {
+            return List.of("reply");
+        }
+        return List.of();
     }
 }

@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * SSE 流式对话编排服务。
@@ -57,23 +58,33 @@ public class StreamingDialogService {
     public SseEmitter stream(StreamingChatRequest request) {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MILLIS);
         String conversationId = normalizeConversationId(request.getConversationId());
-        executor.execute(() -> handleStream(emitter, conversationId, request.getMessage()));
+        String messageId = normalizeMessageId(request.getClientMessageId());
+        AtomicLong sequence = new AtomicLong();
+        executor.execute(() -> handleStream(emitter, conversationId, messageId, request.getMessage(), sequence));
         emitter.onTimeout(() -> {
             log.warn("SSE connection timeout, conversationId={}", conversationId);
+            eventSender.send(emitter, "error", conversationId, messageId, sequence, Map.of(
+                    "code", "SSE_TIMEOUT",
+                    "message", "连接超时，请重试。"
+            ));
             emitter.complete();
         });
         emitter.onError(error -> log.warn("SSE connection error, conversationId={}", conversationId, error));
         return emitter;
     }
 
-    private void handleStream(SseEmitter emitter, String conversationId, String message) {
+    private void handleStream(SseEmitter emitter, String conversationId, String messageId, String message, AtomicLong sequence) {
         CurrentUser user = currentUserProvider.currentUser();
         StringBuilder answerBuffer = new StringBuilder();
         try {
+            eventSender.send(emitter, "conversation_start", conversationId, messageId, sequence, Map.of(
+                    "conversationId", conversationId,
+                    "messageId", messageId
+            ));
             memoryService.appendMessage(conversationId, "user", message);
             ConversationSession session = memoryService.load(conversationId);
             if (session.state() == ConversationState.WAITING_CONFIRM) {
-                handleWaitingConfirm(emitter, conversationId, message, session, answerBuffer);
+                handleWaitingConfirm(emitter, conversationId, messageId, message, session, answerBuffer, sequence);
                 return;
             }
 
@@ -93,25 +104,35 @@ public class StreamingDialogService {
                         .rejected(true)
                         .rejectReason(decision.reason())
                         .build());
-                sendToken(emitter, answerBuffer, decision.reason());
-                eventSender.send(emitter, "done", Map.of("conversationId", conversationId));
+                sendToken(emitter, conversationId, messageId, sequence, answerBuffer, decision.reason());
+                sendDone(emitter, conversationId, messageId, sequence, answerBuffer, ConversationState.COMPLETED, null);
                 emitter.complete();
                 return;
             }
 
+            eventSender.send(emitter, "status", conversationId, messageId, sequence, Map.of(
+                    "stage", "intent_recognized",
+                    "intent", intent.intent().name(),
+                    "confidence", intent.confidence()
+            ));
+
             switch (intent.intent()) {
-                case POLICY_QA -> streamPolicyAnswer(emitter, conversationId, message, context, answerBuffer);
-                case BUSINESS_QUERY -> streamBusinessQuery(emitter, message, intent, answerBuffer);
-                case BUSINESS_EXECUTE -> handleBusinessExecute(emitter, conversationId, message, intent, answerBuffer);
-                case CHITCHAT -> streamChitchat(emitter, message, context, answerBuffer);
-                case AMBIGUOUS -> handleAmbiguous(emitter, conversationId, intent, answerBuffer);
+                case POLICY_QA -> streamPolicyAnswer(emitter, conversationId, messageId, message, context, answerBuffer, sequence);
+                case BUSINESS_QUERY -> streamBusinessQuery(emitter, conversationId, messageId, message, intent, answerBuffer, sequence);
+                case BUSINESS_EXECUTE -> handleBusinessExecute(emitter, conversationId, messageId, message, intent, answerBuffer, sequence);
+                case CHITCHAT -> streamChitchat(emitter, conversationId, messageId, message, context, answerBuffer, sequence);
+                case AMBIGUOUS -> handleAmbiguous(emitter, conversationId, messageId, intent, answerBuffer, sequence);
             }
             memoryService.appendMessage(conversationId, "assistant", answerBuffer.toString());
-            eventSender.send(emitter, "done", Map.of("conversationId", conversationId));
+            ConversationSession latest = memoryService.load(conversationId);
+            sendDone(emitter, conversationId, messageId, sequence, answerBuffer, latest.state(), latest.pendingOperationId());
             emitter.complete();
         } catch (Exception ex) {
             log.error("Streaming dialog failed, conversationId={}, userId={}", conversationId, user.userId(), ex);
-            eventSender.send(emitter, "error", Map.of("message", "对话处理失败，请稍后重试。"));
+            eventSender.send(emitter, "error", conversationId, messageId, sequence, Map.of(
+                    "code", "ASSISTANT_STREAM_FAILED",
+                    "message", "对话处理失败，请稍后重试。"
+            ));
             emitter.completeWithError(ex);
         }
     }
@@ -119,84 +140,117 @@ public class StreamingDialogService {
     private void streamPolicyAnswer(
             SseEmitter emitter,
             String conversationId,
+            String messageId,
             String question,
             String context,
-            StringBuilder answerBuffer
+            StringBuilder answerBuffer,
+            AtomicLong sequence
     ) {
+        eventSender.send(emitter, "status", conversationId, messageId, sequence, Map.of("stage", "retrieving"));
         RetrievalRequest retrievalRequest = new RetrievalRequest();
         retrievalRequest.setQuestion(question);
         retrievalRequest.setTopK(5);
         RetrievalResponse retrieval = onlineRetrievalService.retrieve(retrievalRequest);
         if (retrieval.lowConfidence()) {
-            sendToken(emitter, answerBuffer, retrieval.message());
+            eventSender.send(emitter, "low_confidence", conversationId, messageId, sequence, Map.of("message", retrieval.message()));
+            sendToken(emitter, conversationId, messageId, sequence, answerBuffer, retrieval.message());
             return;
         }
+        eventSender.send(emitter, "retrieval_result", conversationId, messageId, sequence, Map.of(
+                "hitCount", retrieval.results().size(),
+                "citations", retrieval.citations(),
+                "trace", retrieval.trace()
+        ));
         String prompt = dialogProperties.getRagAnswerPromptTemplate()
                 .replace("{question}", question)
                 .replace("{context}", context + "\n" + buildRagContext(retrieval))
                 .replace("{citations}", String.join("\n", retrieval.citations()));
-        streamingChatService.stream(List.of(new QwenChatMessage("user", prompt)), token -> sendToken(emitter, answerBuffer, token));
+        streamingChatService.stream(List.of(new QwenChatMessage("user", prompt)),
+                token -> sendToken(emitter, conversationId, messageId, sequence, answerBuffer, token));
     }
 
     private void streamBusinessQuery(
             SseEmitter emitter,
+            String conversationId,
+            String messageId,
             String message,
             IntentRecognitionResult intent,
-            StringBuilder answerBuffer
+            StringBuilder answerBuffer,
+            AtomicLong sequence
     ) {
-        eventSender.send(emitter, "tool_start", Map.of("intent", intent.intent().name()));
+        eventSender.send(emitter, "tool_start", conversationId, messageId, sequence, Map.of("intent", intent.intent().name()));
         ToolRouteResult result = functionCallingGateway.query(message, intent.slots());
-        eventSender.send(emitter, "tool_result", result.data());
-        sendToken(emitter, answerBuffer, result.answer());
+        eventSender.send(emitter, "tool_result", conversationId, messageId, sequence, result.data());
+        sendToken(emitter, conversationId, messageId, sequence, answerBuffer, result.answer());
     }
 
     private void handleBusinessExecute(
             SseEmitter emitter,
             String conversationId,
+            String messageId,
             String message,
             IntentRecognitionResult intent,
-            StringBuilder answerBuffer
+            StringBuilder answerBuffer,
+            AtomicLong sequence
     ) {
-        eventSender.send(emitter, "tool_start", Map.of("intent", intent.intent().name()));
+        eventSender.send(emitter, "tool_start", conversationId, messageId, sequence, Map.of("intent", intent.intent().name()));
         ToolRouteResult result = functionCallingGateway.execute(message, intent.slots());
-        eventSender.send(emitter, "tool_result", result.data());
+        eventSender.send(emitter, "tool_result", conversationId, messageId, sequence, result.data());
         if (result.waitingConfirm()) {
             memoryService.updateState(conversationId, ConversationState.WAITING_CONFIRM, intent.intent(), intent.slots(), List.of(), result.pendingOperationId());
-            eventSender.send(emitter, "confirm_required", Map.of(
+            eventSender.send(emitter, "confirm_required", conversationId, messageId, sequence, Map.of(
                     "pendingOperationId", result.pendingOperationId(),
                     "summary", result.answer(),
+                    "actions", List.of("confirm", "cancel"),
                     "expireSeconds", 300
             ));
         }
-        sendToken(emitter, answerBuffer, result.answer());
+        sendToken(emitter, conversationId, messageId, sequence, answerBuffer, result.answer());
     }
 
-    private void streamChitchat(SseEmitter emitter, String question, String context, StringBuilder answerBuffer) {
+    private void streamChitchat(
+            SseEmitter emitter,
+            String conversationId,
+            String messageId,
+            String question,
+            String context,
+            StringBuilder answerBuffer,
+            AtomicLong sequence
+    ) {
         String prompt = dialogProperties.getChitchatPromptTemplate()
                 .replace("{context}", context)
                 .replace("{question}", question);
-        streamingChatService.stream(List.of(new QwenChatMessage("user", prompt)), token -> sendToken(emitter, answerBuffer, token));
+        streamingChatService.stream(List.of(new QwenChatMessage("user", prompt)),
+                token -> sendToken(emitter, conversationId, messageId, sequence, answerBuffer, token));
     }
 
     private void handleAmbiguous(
             SseEmitter emitter,
             String conversationId,
+            String messageId,
             IntentRecognitionResult intent,
-            StringBuilder answerBuffer
+            StringBuilder answerBuffer,
+            AtomicLong sequence
     ) {
         memoryService.updateState(conversationId, ConversationState.COLLECTING_SLOTS, intent.intent(), intent.slots(), intent.missingSlots(), null);
+        eventSender.send(emitter, "slot_required", conversationId, messageId, sequence, Map.of(
+                "missingSlots", intent.missingSlots(),
+                "slots", intent.slots()
+        ));
         String question = intent.clarifyQuestion() == null || intent.clarifyQuestion().isBlank()
                 ? "请补充关键信息后我再继续处理。"
                 : intent.clarifyQuestion();
-        sendToken(emitter, answerBuffer, question);
+        sendToken(emitter, conversationId, messageId, sequence, answerBuffer, question);
     }
 
     private void handleWaitingConfirm(
             SseEmitter emitter,
             String conversationId,
+            String messageId,
             String message,
             ConversationSession session,
-            StringBuilder answerBuffer
+            StringBuilder answerBuffer,
+            AtomicLong sequence
     ) {
         boolean confirmed = message.matches(".*(确认|同意|是|提交|继续).*");
         boolean canceled = message.matches(".*(取消|否|不用|停止).*");
@@ -206,15 +260,20 @@ public class StreamingDialogService {
         } else if (canceled) {
             result = confirmationExecutionService.cancel(session.pendingOperationId());
         } else {
-            sendToken(emitter, answerBuffer, "请回复“确认”或“取消”。");
-            eventSender.send(emitter, "done", Map.of("conversationId", conversationId));
+            eventSender.send(emitter, "confirm_required", conversationId, messageId, sequence, Map.of(
+                    "pendingOperationId", session.pendingOperationId(),
+                    "summary", "请回复“确认”或“取消”。",
+                    "actions", List.of("confirm", "cancel")
+            ));
+            sendToken(emitter, conversationId, messageId, sequence, answerBuffer, "请回复“确认”或“取消”。");
+            sendDone(emitter, conversationId, messageId, sequence, answerBuffer, ConversationState.WAITING_CONFIRM, session.pendingOperationId());
             emitter.complete();
             return;
         }
         memoryService.updateState(conversationId, ConversationState.COMPLETED, null, Map.of(), List.of(), null);
-        eventSender.send(emitter, "tool_result", result.data());
-        sendToken(emitter, answerBuffer, result.message());
-        eventSender.send(emitter, "done", Map.of("conversationId", conversationId));
+        eventSender.send(emitter, "tool_result", conversationId, messageId, sequence, result.data());
+        sendToken(emitter, conversationId, messageId, sequence, answerBuffer, result.message());
+        sendDone(emitter, conversationId, messageId, sequence, answerBuffer, ConversationState.COMPLETED, null);
         emitter.complete();
     }
 
@@ -251,12 +310,41 @@ public class StreamingDialogService {
         return builder.toString();
     }
 
-    private void sendToken(SseEmitter emitter, StringBuilder answerBuffer, String token) {
+    private void sendToken(
+            SseEmitter emitter,
+            String conversationId,
+            String messageId,
+            AtomicLong sequence,
+            StringBuilder answerBuffer,
+            String token
+    ) {
         answerBuffer.append(token);
-        eventSender.send(emitter, "message", token);
+        eventSender.send(emitter, "message", conversationId, messageId, sequence, Map.of("delta", token));
+    }
+
+    private void sendDone(
+            SseEmitter emitter,
+            String conversationId,
+            String messageId,
+            AtomicLong sequence,
+            StringBuilder answerBuffer,
+            ConversationState state,
+            String pendingOperationId
+    ) {
+        eventSender.send(emitter, "done", conversationId, messageId, sequence, Map.of(
+                "conversationId", conversationId,
+                "messageId", messageId,
+                "state", state == null ? ConversationState.NORMAL.name() : state.name(),
+                "pendingOperationId", pendingOperationId == null ? "" : pendingOperationId,
+                "answerLength", answerBuffer.length()
+        ));
     }
 
     private String normalizeConversationId(String conversationId) {
         return conversationId == null || conversationId.isBlank() ? UUID.randomUUID().toString() : conversationId;
+    }
+
+    private String normalizeMessageId(String clientMessageId) {
+        return clientMessageId == null || clientMessageId.isBlank() ? UUID.randomUUID().toString() : clientMessageId;
     }
 }

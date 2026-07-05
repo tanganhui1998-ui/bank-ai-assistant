@@ -13,6 +13,11 @@ public class StreamingChatRequest {
 
     private String conversationId;
 
+    /**
+     * 前端生成的消息 ID，用于幂等、链路追踪和断线排查。
+     */
+    private String clientMessageId;
+
     @NotBlank(message = "message cannot be blank")
     private String message;
 }
