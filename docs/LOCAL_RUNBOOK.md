@@ -97,6 +97,212 @@ docker compose ps
 
 首次启动 Elasticsearch 会比较慢，可以等待 1-2 分钟。
 
+### 4.1 RabbitMQ 安装与启用
+
+本项目推荐用 Docker Compose 启动 RabbitMQ，镜像已在 `docker-compose.yml` 中配置：
+
+```yaml
+rabbitmq:
+  image: rabbitmq:3.13-management
+  container_name: bank-ai-rabbitmq
+  ports:
+    - "5672:5672"
+    - "15672:15672"
+```
+
+启动 RabbitMQ：
+
+```powershell
+docker compose up -d rabbitmq
+```
+
+确认容器健康：
+
+```powershell
+docker compose ps rabbitmq
+docker compose logs -f rabbitmq
+```
+
+访问管理控制台：
+
+```text
+http://localhost:15672
+```
+
+默认账号密码：
+
+```text
+username: guest
+password: guest
+```
+
+Spring Boot 连接 RabbitMQ 使用 `.env` 中的配置：
+
+```properties
+RABBITMQ_HOST=localhost
+RABBITMQ_PORT=5672
+RABBITMQ_USERNAME=guest
+RABBITMQ_PASSWORD=guest
+RABBITMQ_VHOST=/
+```
+
+应用启动后会自动创建文档解析交换机、主队列和死信队列。可以在 RabbitMQ 控制台查看：
+
+- Exchanges：`ai.document.exchange`、`ai.document.parse.dlx`
+- Queues：`ai.document.parse.queue`、`ai.document.parse.dlq`
+
+如果你想单独验证 RabbitMQ 是否可用，可以执行：
+
+```powershell
+docker exec bank-ai-rabbitmq rabbitmq-diagnostics -q ping
+```
+
+返回 `Ping succeeded` 表示 RabbitMQ 正常。
+
+### 4.2 Elasticsearch 安装与启用
+
+本项目使用 Elasticsearch 8.15.3，Docker Compose 已关闭本地安全认证，便于开发：
+
+```yaml
+elasticsearch:
+  image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+  environment:
+    discovery.type: single-node
+    xpack.security.enabled: "false"
+    ES_JAVA_OPTS: -Xms1g -Xmx1g
+```
+
+启动 Elasticsearch：
+
+```powershell
+docker compose up -d elasticsearch
+```
+
+查看启动日志：
+
+```powershell
+docker compose logs -f elasticsearch
+```
+
+健康检查：
+
+```powershell
+Invoke-RestMethod http://localhost:9200
+Invoke-RestMethod http://localhost:9200/_cluster/health
+```
+
+正常情况下可以看到集群名、版本号和健康状态。单节点开发环境常见状态：
+
+```json
+{
+  "status": "green"
+}
+```
+
+Spring Boot 连接 Elasticsearch 使用 `.env` 中的配置：
+
+```properties
+ELASTICSEARCH_URIS=http://localhost:9200
+ELASTICSEARCH_USERNAME=
+ELASTICSEARCH_PASSWORD=
+```
+
+应用启动时会初始化知识库切片索引。索引名默认：
+
+```text
+bank-ai-document-chunk
+```
+
+验证索引：
+
+```powershell
+Invoke-RestMethod http://localhost:9200/_cat/indices?v
+Invoke-RestMethod http://localhost:9200/bank-ai-document-chunk/_mapping
+```
+
+如果还没有上传并解析文档，索引可能存在但没有数据。查看文档数量：
+
+```powershell
+Invoke-RestMethod http://localhost:9200/bank-ai-document-chunk/_count
+```
+
+### 4.3 Kibana 安装与启用
+
+Kibana 用于查看 Elasticsearch 索引、Mapping 和检索数据。Docker Compose 已配置：
+
+```yaml
+kibana:
+  image: docker.elastic.co/kibana/kibana:8.15.3
+  environment:
+    ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+  ports:
+    - "5601:5601"
+```
+
+启动 Kibana：
+
+```powershell
+docker compose up -d kibana
+```
+
+Kibana 依赖 Elasticsearch 健康，建议先确认 ES 正常后再打开：
+
+```powershell
+Invoke-RestMethod http://localhost:9200/_cluster/health
+```
+
+访问 Kibana：
+
+```text
+http://localhost:5601
+```
+
+进入 Kibana 后，打开：
+
+```text
+Management -> Dev Tools
+```
+
+常用查询：
+
+```text
+GET _cat/indices?v
+GET bank-ai-document-chunk/_mapping
+GET bank-ai-document-chunk/_search
+{
+  "size": 5,
+  "_source": ["chunkId", "documentId", "documentName", "chapterPath", "content"]
+}
+```
+
+如果 Kibana 页面提示无法连接 Elasticsearch，通常是 ES 还没启动完成。等待 1-2 分钟后刷新，或查看日志：
+
+```powershell
+docker compose logs -f kibana
+docker compose logs -f elasticsearch
+```
+
+### 4.4 一键重启 RabbitMQ/ES/Kibana
+
+只重启这三个服务：
+
+```powershell
+docker compose restart rabbitmq elasticsearch kibana
+```
+
+只查看这三个服务状态：
+
+```powershell
+docker compose ps rabbitmq elasticsearch kibana
+```
+
+如果本地数据损坏，需要清空重建，慎用：
+
+```powershell
+docker compose down -v
+docker compose up -d rabbitmq elasticsearch kibana
+```
+
 ## 5. 编译与测试
 
 推荐先跑测试，确认依赖和 JDK 正确：
@@ -329,11 +535,67 @@ MYSQL_PASSWORD=root123456
 
 Elasticsearch 首次启动需要更多时间和内存。Docker Desktop 建议至少分配 4GB 内存。
 
-### 12.4 AI 对话失败
+如果长时间 unhealthy，按顺序检查：
+
+```powershell
+docker compose logs -f elasticsearch
+Invoke-RestMethod http://localhost:9200/_cluster/health
+```
+
+常见原因：
+
+- Docker Desktop 内存不足，建议分配 4GB 以上。
+- 本机 9200 端口被其他 ES 占用。
+- 首次启动正在初始化数据目录，需要等待。
+
+端口占用检查：
+
+```powershell
+netstat -ano | findstr :9200
+```
+
+### 12.4 Kibana 无法打开
+
+先确认 Kibana 容器和 ES 容器都在运行：
+
+```powershell
+docker compose ps kibana elasticsearch
+```
+
+查看日志：
+
+```powershell
+docker compose logs -f kibana
+```
+
+如果日志中出现连接 ES 失败，先等待 ES 健康：
+
+```powershell
+Invoke-RestMethod http://localhost:9200/_cluster/health
+```
+
+### 12.5 RabbitMQ 控制台打不开
+
+确认 15672 端口没有被占用：
+
+```powershell
+netstat -ano | findstr :15672
+```
+
+确认 RabbitMQ 容器健康：
+
+```powershell
+docker compose ps rabbitmq
+docker exec bank-ai-rabbitmq rabbitmq-diagnostics -q ping
+```
+
+如果登录失败，确认 `.env` 和 `docker-compose.yml` 中的账号密码一致。默认是 `guest/guest`。
+
+### 12.6 AI 对话失败
 
 多数情况下是 `QWEN_API_KEY` 未配置真实值。配置后重新启动应用。
 
-### 12.5 文档上传失败
+### 12.7 文档上传失败
 
 文档上传依赖阿里云 OSS，检查：
 
@@ -342,7 +604,7 @@ Elasticsearch 首次启动需要更多时间和内存。Docker Desktop 建议至
 - `ALIYUN_OSS_ACCESS_KEY_SECRET`
 - `ALIYUN_OSS_BUCKET`
 
-### 12.6 Git 提示 `.git/index.lock`
+### 12.8 Git 提示 `.git/index.lock`
 
 如果 Windows 下出现残留 lock，确认没有 Git 进程后删除：
 
