@@ -127,6 +127,7 @@ app:
         chunk-min-chars: ${DOCUMENT_CHUNK_MIN_CHARS:500}
         chunk-max-chars: ${DOCUMENT_CHUNK_MAX_CHARS:1000}
         chunk-overlap-chars: ${DOCUMENT_CHUNK_OVERLAP_CHARS:150}
+        min-quality-score: ${DOCUMENT_CHUNK_MIN_QUALITY_SCORE:0.35}
     dialog:
       intent-cache-ttl-seconds: ${DIALOG_INTENT_CACHE_TTL_SECONDS:300}
       low-confidence-threshold: ${DIALOG_LOW_CONFIDENCE_THRESHOLD:0.6}

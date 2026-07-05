@@ -177,6 +177,7 @@ public class KnowledgeChunkEsService {
                 .chunkSeq(chunk.getChunkSeq())
                 .startPage(chunk.getStartPage())
                 .endPage(chunk.getEndPage())
+                .qualityScore(chunk.getQualityScore())
                 .effectiveTime(document.getEffectiveTime())
                 .publishedTime(document.getPublishedTime())
                 .createdTime(LocalDateTime.now())

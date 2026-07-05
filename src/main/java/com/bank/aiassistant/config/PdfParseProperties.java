@@ -39,4 +39,9 @@ public class PdfParseProperties {
      * 相邻切片重叠字符数，用于避免跨片上下文断裂。
      */
     private int chunkOverlapChars = 150;
+
+    /**
+     * 切片最低质量分，低于该值的切片会入库留痕，但不会写入 ES。
+     */
+    private double minQualityScore = 0.35D;
 }

@@ -1,14 +1,17 @@
 package com.bank.aiassistant.document.controller;
 
 import com.bank.aiassistant.document.dto.DocumentDownloadUrlResponse;
+import com.bank.aiassistant.document.dto.DocumentChunkPreviewResponse;
 import com.bank.aiassistant.document.dto.DocumentMetadataRequest;
 import com.bank.aiassistant.document.dto.DocumentResponse;
 import com.bank.aiassistant.document.dto.DocumentUpdateRequest;
 import com.bank.aiassistant.document.dto.DocumentUploadResponse;
+import com.bank.aiassistant.document.service.KnowledgeMaintenanceService;
 import com.bank.aiassistant.document.service.DocumentService;
 import com.bank.aiassistant.document.service.DocumentVersionService;
 import com.bank.aiassistant.domain.enums.DocumentBusinessType;
 import com.bank.aiassistant.domain.enums.DocumentProcessStatus;
+import com.bank.aiassistant.search.BulkIndexResult;
 import com.bank.aiassistant.web.Result;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -39,6 +42,7 @@ public class DocumentController {
 
     private final DocumentService documentService;
     private final DocumentVersionService documentVersionService;
+    private final KnowledgeMaintenanceService knowledgeMaintenanceService;
 
     /**
      * Uploads a PDF/DOC/DOCX policy document.
@@ -150,5 +154,32 @@ public class DocumentController {
         log.info("Received document delete request, documentId={}", documentId);
         documentService.deleteDocument(documentId);
         return Result.success(null);
+    }
+
+    /**
+     * 管理端补偿接口：重新发送文档解析任务。
+     */
+    @PostMapping("/{documentId}/parse/retry")
+    public Result<DocumentResponse> retryParse(@PathVariable String documentId) {
+        log.info("Received document parse retry request, documentId={}", documentId);
+        return Result.success(knowledgeMaintenanceService.retryParse(documentId));
+    }
+
+    /**
+     * 管理端补偿接口：基于数据库有效切片重建 ES 索引。
+     */
+    @PostMapping("/{documentId}/index/rebuild")
+    public Result<BulkIndexResult> rebuildIndex(@PathVariable String documentId) {
+        log.info("Received document index rebuild request, documentId={}", documentId);
+        return Result.success(knowledgeMaintenanceService.rebuildDocumentIndex(documentId));
+    }
+
+    /**
+     * 管理端预览接口：查看文档切片、质量分和过滤状态。
+     */
+    @GetMapping("/{documentId}/chunks")
+    public Result<java.util.List<DocumentChunkPreviewResponse>> previewChunks(@PathVariable String documentId) {
+        log.info("Received document chunk preview request, documentId={}", documentId);
+        return Result.success(knowledgeMaintenanceService.previewChunks(documentId));
     }
 }

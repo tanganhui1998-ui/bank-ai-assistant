@@ -29,6 +29,7 @@ public class DocumentChunk {
     private Integer startPage;
     private Integer endPage;
     private Integer tokenCount;
+    private Double qualityScore;
     private ChunkStatus status;
 
     public Document getDocument() {

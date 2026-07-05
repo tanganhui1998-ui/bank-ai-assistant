@@ -79,6 +79,7 @@ public class KnowledgeChunkIndexInitializer implements ApplicationRunner {
                       "chunkSeq": { "type": "integer" },
                       "startPage": { "type": "integer" },
                       "endPage": { "type": "integer" },
+                      "qualityScore": { "type": "double" },
                       "effectiveTime": { "type": "date", "format": "strict_date_optional_time||epoch_millis" },
                       "publishedTime": { "type": "date", "format": "strict_date_optional_time||epoch_millis" },
                       "createdTime": { "type": "date", "format": "strict_date_optional_time||epoch_millis" }

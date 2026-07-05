@@ -1,9 +1,11 @@
 package com.bank.aiassistant.document.parse.pdf;
 
 import com.bank.aiassistant.config.PdfParseProperties;
+import com.bank.aiassistant.document.parse.DocumentChunkQualityService;
 import com.bank.aiassistant.document.parse.DocumentParser;
 import com.bank.aiassistant.document.parse.model.ChunkDraft;
 import com.bank.aiassistant.document.parse.model.ParsedPdfDocument;
+import com.bank.aiassistant.document.parse.word.WordStructureExtractor;
 import com.bank.aiassistant.domain.entity.Document;
 import com.bank.aiassistant.domain.entity.DocumentChunk;
 import com.bank.aiassistant.domain.enums.ChunkStatus;
@@ -49,11 +51,27 @@ public class PdfDocumentParser implements DocumentParser {
     private final PdfChunker pdfChunker;
     private final DocumentChunkRepository chunkRepository;
     private final KnowledgeChunkEsService knowledgeChunkEsService;
+    private final PdfParseProperties pdfParseProperties;
+    private final DocumentChunkQualityService chunkQualityService;
+    private final WordStructureExtractor wordStructureExtractor;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void parse(Document document) {
-        validatePdf(document);
+        String fileType = resolveFileType(document);
+        if ("pdf".equals(fileType)) {
+            parsePdf(document);
+            return;
+        }
+        if ("doc".equals(fileType) || "docx".equals(fileType)) {
+            parseWord(document);
+            return;
+        }
+        throw new IllegalArgumentException("Unsupported document file type, documentId="
+                + document.getDocumentId() + ", fileType=" + document.getFileType());
+    }
+
+    private void parsePdf(Document document) {
         log.info("Start PDF parse, documentId={}, objectKey={}", document.getDocumentId(), document.getOssObjectKey());
 
         try (InputStream inputStream = new BufferedInputStream(ossService.download(document.getOssObjectKey()));
@@ -73,12 +91,32 @@ public class PdfDocumentParser implements DocumentParser {
         }
     }
 
-    private void validatePdf(Document document) {
+    private void parseWord(Document document) {
+        log.info("Start Word parse, documentId={}, objectKey={}", document.getDocumentId(), document.getOssObjectKey());
+        try (InputStream inputStream = new BufferedInputStream(ossService.download(document.getOssObjectKey()))) {
+            ParsedPdfDocument parsedDocument = wordStructureExtractor.extract(
+                    inputStream,
+                    document.getFileName(),
+                    resolveFileType(document));
+            List<ChunkDraft> drafts = pdfChunker.chunk(parsedDocument);
+            List<DocumentChunk> chunks = saveChunks(document, drafts);
+            indexChunksToElasticsearch(document, chunks);
+            log.info("Word parse finished, documentId={}, chunkCount={}", document.getDocumentId(), drafts.size());
+        } catch (Exception ex) {
+            log.error("Word parse failed, documentId={}, objectKey={}",
+                    document.getDocumentId(), document.getOssObjectKey(), ex);
+            throw new IllegalStateException("Word parse failed for document " + document.getDocumentId(), ex);
+        }
+    }
+
+    private String resolveFileType(Document document) {
         String fileType = document.getFileType() == null ? "" : document.getFileType().toLowerCase(Locale.ROOT);
         String fileName = document.getFileName() == null ? "" : document.getFileName().toLowerCase(Locale.ROOT);
-        if (!"pdf".equals(fileType) && !fileName.endsWith(".pdf")) {
-            throw new IllegalArgumentException("Only PDF parsing is implemented currently, documentId=" + document.getDocumentId());
+        if (!fileType.isBlank()) {
+            return fileType.replace(".", "");
         }
+        int index = fileName.lastIndexOf('.');
+        return index >= 0 ? fileName.substring(index + 1) : "";
     }
 
     /**
@@ -102,7 +140,8 @@ public class PdfDocumentParser implements DocumentParser {
                     .startPage(draft.startPage())
                     .endPage(draft.endPage())
                     .tokenCount(draft.tokenCount())
-                    .status(ChunkStatus.VALID)
+                    .qualityScore(chunkQualityService.score(draft.content()))
+                    .status(resolveChunkStatus(draft.content()))
                 .build());
         }
         chunkRepository.saveAll(chunks);
@@ -118,10 +157,18 @@ public class PdfDocumentParser implements DocumentParser {
      */
     private void indexChunksToElasticsearch(Document document, List<DocumentChunk> chunks) {
         knowledgeChunkEsService.deleteByDocumentId(document.getDocumentId());
-        BulkIndexResult result = knowledgeChunkEsService.indexChunks(chunks);
+        List<DocumentChunk> validChunks = chunks.stream()
+                .filter(chunk -> chunk.getStatus() == ChunkStatus.VALID)
+                .toList();
+        BulkIndexResult result = knowledgeChunkEsService.indexChunks(validChunks);
         if (result.hasFailure()) {
             throw new IllegalStateException("ES chunk index partially failed, documentId="
                     + document.getDocumentId() + ", failureCount=" + result.failureCount());
         }
+    }
+
+    private ChunkStatus resolveChunkStatus(String content) {
+        double score = chunkQualityService.score(content);
+        return score >= pdfParseProperties.getMinQualityScore() ? ChunkStatus.VALID : ChunkStatus.EXPIRED;
     }
 }

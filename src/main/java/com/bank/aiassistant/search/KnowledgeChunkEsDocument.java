@@ -29,6 +29,7 @@ public record KnowledgeChunkEsDocument(
         Integer chunkSeq,
         Integer startPage,
         Integer endPage,
+        Double qualityScore,
         LocalDateTime effectiveTime,
         LocalDateTime publishedTime,
         LocalDateTime createdTime

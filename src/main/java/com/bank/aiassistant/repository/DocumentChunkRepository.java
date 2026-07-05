@@ -19,7 +19,7 @@ public interface DocumentChunkRepository {
 
     String BASE_COLUMNS = """
             chunk_id, document_id, content, chapter_path, chapter_no,
-            chunk_seq, start_page, end_page, token_count, status
+            chunk_seq, start_page, end_page, token_count, quality_score, status
             """;
 
     @Select("select " + BASE_COLUMNS + " from knowledge_chunk where chunk_id = #{chunkId}")
@@ -46,10 +46,10 @@ public interface DocumentChunkRepository {
     @Insert("""
             insert into knowledge_chunk (
               chunk_id, document_id, content, chapter_path, chapter_no,
-              chunk_seq, start_page, end_page, token_count, status
+              chunk_seq, start_page, end_page, token_count, quality_score, status
             ) values (
               #{chunkId}, #{documentId}, #{content}, #{chapterPath}, #{chapterNo},
-              #{chunkSeq}, #{startPage}, #{endPage}, #{tokenCount}, #{status}
+              #{chunkSeq}, #{startPage}, #{endPage}, #{tokenCount}, #{qualityScore}, #{status}
             )
             """)
     int insert(DocumentChunk chunk);
@@ -64,6 +64,7 @@ public interface DocumentChunkRepository {
                 start_page = #{startPage},
                 end_page = #{endPage},
                 token_count = #{tokenCount},
+                quality_score = #{qualityScore},
                 status = #{status}
             where chunk_id = #{chunkId}
             """)

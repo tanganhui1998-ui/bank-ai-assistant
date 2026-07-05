@@ -23,6 +23,7 @@
         <langchain4j.version>1.0.0-alpha1</langchain4j.version>
         <aliyun-oss.version>3.18.1</aliyun-oss.version>
         <pdfbox.version>2.0.31</pdfbox.version>
+        <poi.version>5.3.0</poi.version>
         <tabula.version>1.0.5</tabula.version>
         <tess4j.version>5.13.0</tess4j.version>
         <elasticsearch-java.version>8.15.3</elasticsearch-java.version>
@@ -123,9 +124,25 @@
             <version>${pdfbox.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>${poi.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-scratchpad</artifactId>
+            <version>${poi.version}</version>
+        </dependency>
+        <dependency>
             <groupId>technology.tabula</groupId>
             <artifactId>tabula</artifactId>
             <version>${tabula.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-simple</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>net.sourceforge.tess4j</groupId>
