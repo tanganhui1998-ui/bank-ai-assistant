@@ -168,9 +168,33 @@ app:
         用户问题：
         {question}
     security:
+      identity:
+        header-auth-enabled: ${SECURITY_HEADER_AUTH_ENABLED:true}
+        mock-fallback-enabled: ${SECURITY_MOCK_FALLBACK_ENABLED:true}
+        user-id-header: ${SECURITY_USER_ID_HEADER:X-User-Id}
+        user-name-header: ${SECURITY_USER_NAME_HEADER:X-User-Name}
+        tenant-id-header: ${SECURITY_TENANT_ID_HEADER:X-Tenant-Id}
+        roles-header: ${SECURITY_ROLES_HEADER:X-User-Roles}
+        departments-header: ${SECURITY_DEPARTMENTS_HEADER:X-User-Departments}
+        data-scope-header: ${SECURITY_DATA_SCOPE_HEADER:X-Data-Scope}
+        branch-no-header: ${SECURITY_BRANCH_NO_HEADER:X-Branch-No}
       reconcile-fixed-delay-ms: ${AI_SECURITY_RECONCILE_FIXED_DELAY_MS:300000}
     pending-operation:
       default-expire-minutes: ${PENDING_OPERATION_EXPIRE_MINUTES:10}
+  business-integration:
+    enabled: ${BUSINESS_INTEGRATION_ENABLED:false}
+    base-url: ${BUSINESS_INTEGRATION_BASE_URL:http://localhost:18080}
+    api-key: ${BUSINESS_INTEGRATION_API_KEY:}
+    connect-timeout-millis: ${BUSINESS_INTEGRATION_CONNECT_TIMEOUT_MILLIS:3000}
+    read-timeout-millis: ${BUSINESS_INTEGRATION_READ_TIMEOUT_MILLIS:5000}
+    leave-balance-path: ${BUSINESS_LEAVE_BALANCE_PATH:/api/hr/leave/balance}
+    leave-records-path: ${BUSINESS_LEAVE_RECORDS_PATH:/api/hr/leave/records}
+    salary-detail-path: ${BUSINESS_SALARY_DETAIL_PATH:/api/hr/salary/detail}
+    salary-history-path: ${BUSINESS_SALARY_HISTORY_PATH:/api/hr/salary/history}
+    approval-progress-path: ${BUSINESS_APPROVAL_PROGRESS_PATH:/api/workflow/approval/progress}
+    todo-tasks-path: ${BUSINESS_TODO_TASKS_PATH:/api/workflow/todo/tasks}
+    outsourcing-progress-path: ${BUSINESS_OUTSOURCING_PROGRESS_PATH:/api/outsourcing/application/progress}
+    execute-path: ${BUSINESS_EXECUTE_PATH:/api/ai/write/execute}
 
 logging:
   level:

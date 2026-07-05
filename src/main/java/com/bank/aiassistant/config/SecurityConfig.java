@@ -1,7 +1,9 @@
 package com.bank.aiassistant.config;
 
 import com.bank.aiassistant.security.MockSecurityContextFilter;
+import com.bank.aiassistant.security.GatewayHeaderAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -20,17 +22,20 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
+@EnableConfigurationProperties(SecurityIdentityProperties.class)
 @RequiredArgsConstructor
 public class SecurityConfig {
 
+    private final GatewayHeaderAuthenticationFilter gatewayHeaderAuthenticationFilter;
     private final MockSecurityContextFilter mockSecurityContextFilter;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
-                .authorizeHttpRequests(registry -> registry.anyRequest().permitAll())
-                .addFilterBefore(mockSecurityContextFilter, UsernamePasswordAuthenticationFilter.class)
+                .authorizeHttpRequests(registry -> registry.anyRequest().authenticated())
+                .addFilterBefore(gatewayHeaderAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(mockSecurityContextFilter, GatewayHeaderAuthenticationFilter.class)
                 .build();
     }
 }

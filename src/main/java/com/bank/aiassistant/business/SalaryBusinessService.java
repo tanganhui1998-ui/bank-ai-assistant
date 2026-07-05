@@ -1,33 +1,28 @@
 package com.bank.aiassistant.business;
 
+import com.bank.aiassistant.business.client.SalaryBusinessClient;
+import com.bank.aiassistant.context.CurrentUserProvider;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * 薪资业务查询服务 Mock 实现。
+ * 薪资业务服务。
  */
 @Service
+@RequiredArgsConstructor
 public class SalaryBusinessService {
 
+    private final CurrentUserProvider currentUserProvider;
+    private final SalaryBusinessClient client;
+
     public Map<String, Object> querySalaryDetail(String userId, String month) {
-        return Map.of(
-                "userId", userId,
-                "month", month,
-                "baseSalary", 18000,
-                "performance", 5200,
-                "allowance", 1200,
-                "tax", 2100,
-                "netSalary", 22300
-        );
+        return client.querySalaryDetail(currentUserProvider.currentUser(), userId, month);
     }
 
     public List<Map<String, Object>> querySalaryHistory(String userId, String year) {
-        return List.of(
-                Map.of("year", year, "month", year + "-01", "netSalary", 22100),
-                Map.of("year", year, "month", year + "-02", "netSalary", 22450),
-                Map.of("year", year, "month", year + "-03", "netSalary", 22300)
-        );
+        return client.querySalaryHistory(currentUserProvider.currentUser(), userId, year);
     }
 }

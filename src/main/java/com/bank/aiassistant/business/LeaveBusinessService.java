@@ -1,29 +1,30 @@
 package com.bank.aiassistant.business;
 
+import com.bank.aiassistant.business.client.LeaveBusinessClient;
+import com.bank.aiassistant.context.CurrentUserProvider;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * 请假业务查询服务 Mock 实现。
+ * 请假业务服务。
+ *
+ * 工具层只依赖该服务；真实系统调用和本地 Mock 由 LeaveBusinessClient 决定。
  */
 @Service
+@RequiredArgsConstructor
 public class LeaveBusinessService {
 
+    private final CurrentUserProvider currentUserProvider;
+    private final LeaveBusinessClient client;
+
     public Map<String, Object> queryLeaveBalance(String userId) {
-        return Map.of(
-                "userId", userId,
-                "annualLeaveDays", 8.5,
-                "personalLeaveDays", 3,
-                "sickLeaveDays", 10
-        );
+        return client.queryLeaveBalance(currentUserProvider.currentUser(), userId);
     }
 
     public List<Map<String, Object>> queryLeaveRecords(String userId) {
-        return List.of(
-                Map.of("leaveType", "年假", "startTime", "2026-03-04 09:00", "endTime", "2026-03-05 18:00", "status", "已通过"),
-                Map.of("leaveType", "病假", "startTime", "2026-05-12 09:00", "endTime", "2026-05-12 18:00", "status", "审批中")
-        );
+        return client.queryLeaveRecords(currentUserProvider.currentUser(), userId);
     }
 }

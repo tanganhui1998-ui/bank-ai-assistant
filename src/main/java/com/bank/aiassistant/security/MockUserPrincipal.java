@@ -14,6 +14,12 @@ public record MockUserPrincipal(
         String userName,
         String tenantId,
         List<String> roles,
-        List<String> departments
+        List<String> departments,
+        String dataScope,
+        String branchNo
 ) {
+
+    public MockUserPrincipal(String userId, String userName, String tenantId, List<String> roles, List<String> departments) {
+        this(userId, userName, tenantId, roles, departments, "ALL", "0000");
+    }
 }

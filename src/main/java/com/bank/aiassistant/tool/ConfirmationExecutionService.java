@@ -1,5 +1,7 @@
 package com.bank.aiassistant.tool;
 
+import com.bank.aiassistant.business.BusinessExecutionResult;
+import com.bank.aiassistant.business.client.BusinessWriteClient;
 import com.bank.aiassistant.context.CurrentUser;
 import com.bank.aiassistant.context.CurrentUserProvider;
 import com.bank.aiassistant.domain.entity.AiBusinessOrder;
@@ -17,7 +19,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * 二次确认执行服务。
@@ -35,6 +36,7 @@ public class ConfirmationExecutionService {
     private final AiBusinessOrderRepository businessOrderRepository;
     private final AiSecuritySandboxService sandboxService;
     private final SecurityAuditService securityAuditService;
+    private final BusinessWriteClient businessWriteClient;
 
     @Transactional
     public ConfirmationExecutionResult confirm(String pendingId) {
@@ -86,22 +88,26 @@ public class ConfirmationExecutionService {
     }
 
     private ConfirmationExecutionResult executeBusinessApi(CurrentUser user, PendingConfirmationRecord record) {
-        String businessOrderNo = "AI-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        BusinessExecutionResult executionResult = businessWriteClient.execute(user, record.toolName(), record.params());
+        String businessOrderNo = executionResult.businessOrderNo() == null || executionResult.businessOrderNo().isBlank()
+                ? record.pendingId()
+                : executionResult.businessOrderNo();
         businessOrderRepository.save(AiBusinessOrder.builder()
                 .pendingId(record.pendingId())
                 .businessOrderNo(businessOrderNo)
                 .userId(user.userId())
                 .toolName(record.toolName())
-                .status("SUCCESS")
+                .status(executionResult.success() ? "SUCCESS" : "FAILED")
                 .createdTime(LocalDateTime.now())
                 .build());
         return ConfirmationExecutionResult.builder()
-                .success(true)
-                .message("已确认并提交：" + record.summary())
+                .success(executionResult.success())
+                .message(executionResult.message())
                 .data(Map.of(
                         "pendingId", record.pendingId(),
                         "businessOrderNo", businessOrderNo,
-                        "toolName", record.toolName()
+                        "toolName", record.toolName(),
+                        "businessResult", executionResult.data() == null ? Map.of() : executionResult.data()
                 ))
                 .build();
     }

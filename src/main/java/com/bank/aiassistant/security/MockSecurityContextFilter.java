@@ -7,6 +7,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import com.bank.aiassistant.config.SecurityIdentityProperties;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -20,7 +22,10 @@ import java.util.List;
  * 这样 @PreAuthorize、权限过滤和当前用户服务都能基于 SecurityContextHolder 工作。
  */
 @Component
+@RequiredArgsConstructor
 public class MockSecurityContextFilter extends OncePerRequestFilter {
+
+    private final SecurityIdentityProperties properties;
 
     @Override
     protected void doFilterInternal(
@@ -28,7 +33,7 @@ public class MockSecurityContextFilter extends OncePerRequestFilter {
             HttpServletResponse response,
             FilterChain filterChain
     ) throws ServletException, IOException {
-        if (SecurityContextHolder.getContext().getAuthentication() == null) {
+        if (SecurityContextHolder.getContext().getAuthentication() == null && properties.isMockFallbackEnabled()) {
             MockUserPrincipal principal = new MockUserPrincipal(
                     "u1001",
                     "管理员",
